@@ -73,3 +73,63 @@ def calculate_polarisation_metrics(agent_positions, preferences, first_choices, 
     kemenypolar /= comb(N_PARTIES, 2) * floor(N_AGENTS/2) * (N_AGENTS - floor(N_AGENTS/2))
 
     return partypolar, prefpolar, binarypolar, kemenypolar
+
+def calculate_social_choice_winners(preferences, N_AGENTS, N_PARTIES):
+    # Majority Matrix (ikili karşılaştırmalar için)
+    majority_matrix = np.zeros((N_PARTIES, N_PARTIES))
+    for i in range(N_AGENTS):
+        ranks = preferences[i]
+        for a in range(N_PARTIES):
+            for b in range(a+1, N_PARTIES):
+                if ranks.tolist().index(a) < ranks.tolist().index(b):
+                    majority_matrix[a, b] += 1
+                else:
+                    majority_matrix[b, a] += 1
+
+    # 1. Plurality (Çoğunluk)
+    first_choices = preferences[:, 0]
+    plurality_votes = np.bincount(first_choices, minlength=N_PARTIES)
+    plurality_winner = np.argmax(plurality_votes)
+
+    # 2. Borda
+    borda_scores = np.zeros(N_PARTIES)
+    for i in range(N_AGENTS):
+        ranks = preferences[i]
+        for rank, party in enumerate(ranks):
+            borda_scores[party] += (N_PARTIES - 1 - rank)  # 1. tercih: (n-1) puan, 2. tercih: (n-2) puan, ...
+    borda_winner = np.argmax(borda_scores)
+
+    # 3. Majority Comparison (Maj. Comp.)
+    # Her partinin diğer partilere karşı ikili karşılaştırmalarda aldığı oylar
+    maj_comp_scores = np.zeros(N_PARTIES)
+    for a in range(N_PARTIES):
+        for b in range(N_PARTIES):
+            if a != b:
+                if majority_matrix[a, b] > majority_matrix[b, a]:
+                    maj_comp_scores[a] += 1
+                elif majority_matrix[a, b] == majority_matrix[b, a] and a < b:  # Beraberlik durumunda
+                    maj_comp_scores[a] += 0.5
+                    maj_comp_scores[b] += 0.5
+    maj_comp_winner = np.argmax(maj_comp_scores)
+
+    # 4. Copeland
+    copeland_scores = np.zeros(N_PARTIES)
+    for a in range(N_PARTIES):
+        for b in range(N_PARTIES):
+            if a != b:
+                if majority_matrix[a, b] > majority_matrix[b, a]:
+                    copeland_scores[a] += 1  # Kazanılan karşılaştırma
+                elif majority_matrix[a, b] == majority_matrix[b, a]:
+                    copeland_scores[a] += 0.5  # Beraberlik
+    copeland_winner = np.argmax(copeland_scores)
+
+    return {
+        "plurality_winner": plurality_winner,
+        "borda_winner": borda_winner,
+        "maj_comp_winner": maj_comp_winner,
+        "copeland_winner": copeland_winner,
+        "plurality_votes": plurality_votes,
+        "borda_scores": borda_scores,
+        "maj_comp_scores": maj_comp_scores,
+        "copeland_scores": copeland_scores
+    }

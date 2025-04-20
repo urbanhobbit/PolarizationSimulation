@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from agents import Agents
 from scenarios import SCENARIOS
 from config import *
-from polarisation import calculate_polarisation_metrics
+from polarisation import calculate_polarisation_metrics, calculate_social_choice_winners
 from deliberation import deliberation_step_matched
 import io
 import inspect
@@ -27,6 +27,7 @@ def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix):
     positions_record = []
     polarisation_records = []
     voting_records = []
+    social_choice_records = []
 
     for t in range(1, T + 1):
         agents.positions = deliberation_step_matched(
@@ -74,7 +75,7 @@ def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix):
             expected_args = len(sig.parameters)
             if expected_args != 7:
                 st.error(f"calculate_polarisation_metrics fonksiyonu {expected_args} argüman bekliyor, ancak 7 argüman gerekiyor. Lütfen polarisation.py dosyasını kontrol edin.")
-                return None, None, None
+                return None, None, None, None
 
             try:
                 party_polar, pref_polar, binary_polar, kemeny_polar = calculate_polarisation_metrics(
@@ -82,7 +83,7 @@ def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix):
                 )
             except TypeError as e:
                 st.error(f"calculate_polarisation_metrics çağrısında hata: {str(e)}. polarisation.py dosyasını kontrol edin.")
-                return None, None, None
+                return None, None, None, None
 
             polarisation_records.append({
                 "Iteration": t,
@@ -95,12 +96,29 @@ def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix):
             voting_share = pd.Series(first_choices).value_counts(normalize=True).sort_index()
             voting_records.append({"Iteration": t, **voting_share.to_dict()})
 
+            # Sosyal seçim kuralları
+            social_choice_results = calculate_social_choice_winners(preferences, N_AGENTS, N_PARTIES)
+            social_choice_record = {
+                "Iteration": t,
+                "PluralityWinner": social_choice_results["plurality_winner"],
+                "BordaWinner": social_choice_results["borda_winner"],
+                "MajCompWinner": social_choice_results["maj_comp_winner"],
+                "CopelandWinner": social_choice_results["copeland_winner"]
+            }
+            for i in range(N_PARTIES):
+                social_choice_record[f"PluralityVotes{i}"] = social_choice_results["plurality_votes"][i]
+                social_choice_record[f"BordaScores{i}"] = social_choice_results["borda_scores"][i]
+                social_choice_record[f"MajCompScores{i}"] = social_choice_results["maj_comp_scores"][i]
+                social_choice_record[f"CopelandScores{i}"] = social_choice_results["copeland_scores"][i]
+            social_choice_records.append(social_choice_record)
+
             positions_record.append((frame, frame_party_centers, frame_society_center))
 
     polarisation_df = pd.DataFrame(polarisation_records)
     voting_df = pd.DataFrame(voting_records).fillna(0)
+    social_choice_df = pd.DataFrame(social_choice_records)
 
-    return positions_record, polarisation_df, voting_df
+    return positions_record, polarisation_df, voting_df, social_choice_df
 
 # --- Streamlit Setup ---
 st.set_page_config(page_title="Polarisation Simulation", layout="wide")
@@ -161,11 +179,12 @@ N_FRAMES = st.sidebar.slider("Number of Frames", 10, 100, 30, step=5)
 
 col1, col2 = st.sidebar.columns(2)
 if col1.button("▶️ Start Simulation"):
-    positions_record, polarisation_df, voting_df = run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix)
+    positions_record, polarisation_df, voting_df, social_choice_df = run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix)
     if positions_record is not None:
         st.session_state.positions_record = positions_record
         st.session_state.polarisation_df = polarisation_df
         st.session_state.voting_df = voting_df
+        st.session_state.social_choice_df = social_choice_df
         st.session_state.N_PARTIES = len(party_positions)
         st.session_state.party_positions = party_positions  # Parti pozisyonlarını sakla
 if col2.button("⏹️ Stop Simulation"):
@@ -177,6 +196,7 @@ if 'positions_record' in st.session_state and st.session_state.positions_record 
     positions_record = st.session_state.positions_record
     polarisation_df = st.session_state.polarisation_df
     voting_df = st.session_state.voting_df
+    social_choice_df = st.session_state.social_choice_df
     N_PARTIES = st.session_state.N_PARTIES
     # party_positions'ı session_state'ten al, yoksa mevcut party_positions'ı kullan
     party_positions = st.session_state.get('party_positions', party_positions)
@@ -287,7 +307,6 @@ if 'positions_record' in st.session_state and st.session_state.positions_record 
             title=f"Opinion Space: Iteration {unique_iterations[0]}",
             showlegend=True,
             shapes=[
-                # Görüş uzayını çevreleyen çerçeve
                 dict(
                     type="rect",
                     x0=-OPINION_SPACE_SIZE/2,
@@ -313,7 +332,7 @@ if 'positions_record' in st.session_state and st.session_state.positions_record 
                     }
                 ]
             }]
-        )
+        )  # Eksik parantez kapatıldı
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
@@ -347,6 +366,50 @@ if 'positions_record' in st.session_state and st.session_state.positions_record 
                            title="Preference Profile Support Over Time")
         st.plotly_chart(fig_pref, use_container_width=True)
 
+        # Sosyal Seçim Kuralları Sonuçları
+        st.subheader("Social Choice Results Over Time")
+        
+        # Kazananlar için çizgi grafiği
+        winner_df = social_choice_df[["Iteration", "PluralityWinner", "BordaWinner", "MajCompWinner", "CopelandWinner"]]
+        winner_df = winner_df.rename(columns={
+            "PluralityWinner": "Plurality",
+            "BordaWinner": "Borda",
+            "MajCompWinner": "Maj. Comp.",
+            "CopelandWinner": "Copeland"
+        })
+        fig_winners = px.line(
+            winner_df.set_index("Iteration"),
+            title="Social Choice Winners Over Time",
+            labels={"value": "Winning Party", "variable": "Rule"}
+        )
+        fig_winners.update_yaxes(tickvals=list(range(N_PARTIES)), ticktext=[f"Party {i+1}" for i in range(N_PARTIES)])
+        st.plotly_chart(fig_winners, use_container_width=True)
+
+        # Her kural için puanların zaman içindeki değişimi
+        for rule, score_prefix in [
+            ("Plurality", "PluralityVotes"),
+            ("Borda", "BordaScores"),
+            ("Maj. Comp.", "MajCompScores"),
+            ("Copeland", "CopelandScores")
+        ]:
+            score_cols = {f"{score_prefix}{i}": f"Party {i+1}" for i in range(N_PARTIES)}
+            score_df = social_choice_df[["Iteration"] + [f"{score_prefix}{i}" for i in range(N_PARTIES)]]
+            score_df = score_df.rename(columns=score_cols)
+            fig_scores = px.line(
+                score_df.set_index("Iteration"),
+                title=f"{rule} Scores Over Time",
+                labels={"value": "Score", "variable": "Party"}
+            )
+            st.plotly_chart(fig_scores, use_container_width=True)
+
+        # Son iterasyondaki kazananlar
+        st.subheader("Final Social Choice Winners")
+        final_winners = social_choice_df[social_choice_df["Iteration"] == social_choice_df["Iteration"].max()]
+        final_winners = final_winners[["PluralityWinner", "BordaWinner", "MajCompWinner", "CopelandWinner"]].iloc[0]
+        final_winners.index = ["Plurality", "Borda", "Maj. Comp.", "Copeland"]
+        final_winners = final_winners.apply(lambda x: f"Party {int(x)+1}")
+        st.table(final_winners.rename("Winner"))
+
     # --- Download Section ---
     with st.expander("📥 Download Simulation Results"):
         # Polarisation Results
@@ -368,6 +431,17 @@ if 'positions_record' in st.session_state and st.session_state.positions_record 
             label="Download Voting Results",
             data=excel_buffer_vote,
             file_name="voting_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        # Social Choice Results
+        excel_buffer_social = io.BytesIO()
+        social_choice_df.to_excel(excel_buffer_social, index=False)
+        excel_buffer_social.seek(0)
+        st.download_button(
+            label="Download Social Choice Results",
+            data=excel_buffer_social,
+            file_name="social_choice_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 else:
