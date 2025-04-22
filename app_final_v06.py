@@ -16,10 +16,14 @@ import time
 
 # --- Simulation Function ---
 @st.cache_data
-def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, preference_update_mode="dynamic"):
+def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, N_PROFILES, preference_update_mode="dynamic"):
     np.random.seed(42)
     N_PARTIES = len(party_positions)
-    N_PROFILES = math.factorial(N_PARTIES)
+    expected_N_PROFILES = math.factorial(N_PARTIES)
+
+    # Validate N_PROFILES consistency
+    if N_PROFILES != expected_N_PROFILES:
+        raise ValueError(f"N_PROFILES ({N_PROFILES}) does not match expected value ({expected_N_PROFILES}) for {N_PARTIES} parties.")
 
     # Validate delta_matrix shape before proceeding
     if delta_matrix.shape != (N_PROFILES, N_PROFILES):
@@ -211,7 +215,7 @@ if col1.button("▶️ Start", key="start_simulation"):
     st.session_state['simulation_running'] = True
     try:
         positions_record, polarisation_df, voting_df, social_choice_df = run_simulation(
-            N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, preference_update_mode
+            N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, N_PROFILES, preference_update_mode
         )
         progress_update_interval = max(1, T // 50)
         for t in range(1, T + 1):
@@ -256,6 +260,7 @@ if st.sidebar.button("🔄 Reset Parameters", key="reset_parameters"):
     st.session_state['T'] = 300
     st.session_state['N_FRAMES'] = 30
     st.session_state['frame_duration'] = 500
+    st.cache_data.clear()  # Clear cache to prevent stale results
     st.rerun()
 
 # Results Management
@@ -438,7 +443,7 @@ The sidebar's "Simulation Settings" section allows you to configure the simulati
 ### Running the Simulation
 - **Start**: Click the "▶️ Start" button to run the simulation with the configured parameters.
 - **Stop/Cancel**: Click "⏹️ Stop/Cancel" to interrupt the simulation or clear results.
-- **Reset Parameters**: Click "🔄 Reset Parameters" to revert to default settings (200 agents, 300 iterations, 30 frames, 500 ms animation speed).
+- **Reset Parameters**: Click "🔄 Reset Parameters" to revert to default settings (200 agents, 300 iterations, 30 frames, 500 ms animation speed). This will also clear the cache to ensure consistency.
 
 ## Visualizations
 
@@ -522,7 +527,7 @@ The "Results Management" section in the sidebar allows you to save, export, and 
   ```
 - **Slow Performance**: For large simulations (e.g., 2000 agents, 1000 iterations), reduce the number of agents, iterations, or frames to improve performance.
 - **Animation Not Displaying**: Ensure the simulation has completed successfully. Check the progress bar and status messages in the main interface.
-- **Simulation Fails**: Check for errors in the sidebar (e.g., mismatched delta matrix dimensions) and adjust parameters accordingly.
+- **Simulation Fails**: Check for errors in the sidebar (e.g., mismatched delta matrix dimensions) and adjust parameters accordingly. If the error persists, try clearing the cache using the "Advanced Controls" section.
 - **MATLAB Alignment Issues**: Compare `agents.positions` and `agents.pref_indices` with MATLAB's `cagentnew` and `pprofshnew` using identical inputs to ensure consistency.
 
 ## Contact and Support
@@ -552,7 +557,7 @@ For additional support, please contact the developer at [insert contact informat
             key="download_technical_doc"
         )
     except FileNotFoundError:
-        st.warning("Technical document DOCX not found. Please ensure 'technical_document.docx' is in the project directory (C:\\Users\\emree\\NPx\\tes2\\).")
+        st.warning("Technical document DOCX not found. Please ensure 'technical_document.docx' is in the project directory (/mount/src/polarizationsimulation/).")
         st.info("To generate the DOCX file:\n"
                 "1. Save the Markdown file 'technical_document.md' provided in the documentation.\n"
                 "2. Install Pandoc (download from pandoc.org/installing.html) and ensure it's added to your PATH.\n"
