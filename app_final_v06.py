@@ -21,8 +21,12 @@ def run_simulation(N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, prefere
     N_PARTIES = len(party_positions)
     N_PROFILES = math.factorial(N_PARTIES)
 
+    # Validate delta_matrix shape before proceeding
+    if delta_matrix.shape != (N_PROFILES, N_PROFILES):
+        raise ValueError(f"delta_matrix shape {delta_matrix.shape} does not match required shape ({N_PROFILES}, {N_PROFILES}) for {N_PARTIES} parties.")
+
     agents = Agents(N_AGENTS, OPINION_SPACE_SIZE)
-    profiles = np.random.choice(N_PROFILES, N_AGENTS)
+    profiles = np.random.choice(N_PROFILES, N_AGENTS)  # Initialize profiles after delta_matrix is validated
     agents.pref_indices = profiles
 
     step_interval = max(1, T // N_FRAMES)
@@ -130,9 +134,7 @@ st.subheader("POlarization viewed from a SOcial choice Perspective")
 # --- Sidebar Controls ---
 st.sidebar.header("Simulation Settings")
 
-selected_scenario = st.sidebar.selectbox("Select Scenario for Delta Matrix", list(SCENARIOS.keys()))
-delta_matrix = SCENARIOS[selected_scenario]["delta_matrix"]
-
+# First, determine N_PARTIES and party_positions
 party_input_mode = st.sidebar.radio(
     "How to define party positions?",
     options=["Preset Scenario", "Manual Entry"],
@@ -140,6 +142,7 @@ party_input_mode = st.sidebar.radio(
 )
 
 if party_input_mode == "Preset Scenario":
+    selected_scenario = st.sidebar.selectbox("Select Scenario", list(SCENARIOS.keys()))
     party_positions = np.array(SCENARIOS[selected_scenario]["party_positions"])
     N_PARTIES = len(party_positions)
 else:
@@ -151,10 +154,19 @@ else:
         manual_positions.append([x, y])
     party_positions = np.array(manual_positions)
 
-# Handle delta_matrix for variable N_PARTIES
+# Compute N_PROFILES after N_PARTIES is determined
 N_PROFILES = math.factorial(N_PARTIES)
-if delta_matrix.shape != (N_PROFILES, N_PROFILES):
-    st.sidebar.warning(f"Selected scenario's delta_matrix is {delta_matrix.shape}, but {N_PARTIES} parties require a {N_PROFILES}x{N_PROFILES} matrix. Using default identity matrix.")
+
+# Now load or define delta_matrix
+if party_input_mode == "Preset Scenario":
+    delta_matrix = SCENARIOS[selected_scenario]["delta_matrix"]
+    # Validate delta_matrix shape
+    if delta_matrix.shape != (N_PROFILES, N_PROFILES):
+        st.sidebar.warning(f"Selected scenario's delta_matrix is {delta_matrix.shape}, but {N_PARTIES} parties require a {N_PROFILES}x{N_PROFILES} matrix. Using default identity matrix.")
+        delta_matrix = np.eye(N_PROFILES)
+else:
+    # For manual entry, use a default identity matrix
+    st.sidebar.info("Since party positions are manually defined, a default identity delta matrix is used.")
     delta_matrix = np.eye(N_PROFILES)
 
 with st.sidebar.expander("🔍 View Selected Configuration"):
@@ -197,28 +209,34 @@ if col1.button("▶️ Start", key="start_simulation"):
     status_container.write("Starting simulation...")
     st.session_state['cancel_simulation'] = False
     st.session_state['simulation_running'] = True
-    positions_record, polarisation_df, voting_df, social_choice_df = run_simulation(
-        N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, preference_update_mode
-    )
-    progress_update_interval = max(1, T // 50)
-    for t in range(1, T + 1):
-        if t % progress_update_interval == 0 or t == T:
-            progress_bar.progress(t / T)
-            status_container.write(f"Running iteration {t} of {T}")
-            time.sleep(0.05)
-    if positions_record is not None:
-        status_container.write("Simulation completed!")
-        st.session_state.positions_record = positions_record
-        st.session_state.polarisation_df = polarisation_df
-        st.session_state.voting_df = voting_df
-        st.session_state.social_choice_df = social_choice_df
-        st.session_state.N_PARTIES = N_PARTIES
-        st.session_state.party_positions = party_positions
-        st.session_state.current_scenario = selected_scenario
-        st.session_state.current_delta_matrix = delta_matrix
-        st.session_state.simulation_running = False
-    else:
-        status_container.write("Simulation cancelled.")
+    try:
+        positions_record, polarisation_df, voting_df, social_choice_df = run_simulation(
+            N_AGENTS, T, N_FRAMES, party_positions, delta_matrix, preference_update_mode
+        )
+        progress_update_interval = max(1, T // 50)
+        for t in range(1, T + 1):
+            if t % progress_update_interval == 0 or t == T:
+                progress_bar.progress(t / T)
+                status_container.write(f"Running iteration {t} of {T}")
+                time.sleep(0.05)
+        if positions_record is not None:
+            status_container.write("Simulation completed!")
+            st.session_state.positions_record = positions_record
+            st.session_state.polarisation_df = polarisation_df
+            st.session_state.voting_df = voting_df
+            st.session_state.social_choice_df = social_choice_df
+            st.session_state.N_PARTIES = N_PARTIES
+            st.session_state.party_positions = party_positions
+            st.session_state.current_scenario = selected_scenario if party_input_mode == "Preset Scenario" else "Manual"
+            st.session_state.current_delta_matrix = delta_matrix
+            st.session_state.simulation_running = False
+        else:
+            status_container.write("Simulation cancelled.")
+            progress_bar.progress(0.0)
+            st.session_state.simulation_running = False
+    except ValueError as e:
+        st.error(f"Simulation failed: {str(e)}")
+        status_container.write("Simulation failed due to configuration error.")
         progress_bar.progress(0.0)
         st.session_state.simulation_running = False
 
@@ -279,9 +297,7 @@ with st.sidebar.expander("💾 Results Management"):
             else:
                 excel_buffer = io.BytesIO()
                 try:
-                    # Try using xlsxwriter engine
                     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                        # Metadata sheet
                         metadata_rows = []
                         for sim in selected_simulations:
                             base_name = sim['name'][:21]
@@ -289,7 +305,6 @@ with st.sidebar.expander("💾 Results Management"):
                                 "Simulation Name": sim["name"],
                                 "Scenario": sim["scenario"]
                             })
-                            # Party Positions
                             party_positions_df = pd.DataFrame(
                                 sim["party_positions"],
                                 columns=["X", "Y"],
@@ -297,7 +312,6 @@ with st.sidebar.expander("💾 Results Management"):
                             )
                             sheet_name = f"{base_name}_party_pos"
                             party_positions_df.to_excel(writer, sheet_name=sheet_name)
-                            # Delta Matrix
                             delta_matrix_df = pd.DataFrame(
                                 sim["delta_matrix"],
                                 columns=[f"Profile {i}" for i in range(sim["delta_matrix"].shape[0])],
@@ -305,7 +319,6 @@ with st.sidebar.expander("💾 Results Management"):
                             )
                             sheet_name = f"{base_name}_delta"
                             delta_matrix_df.to_excel(writer, sheet_name=sheet_name)
-                            # Data sheets
                             sim["polarisation_df"].to_excel(writer, sheet_name=f"{base_name}_polar", index=False)
                             sim["voting_df"].to_excel(writer, sheet_name=f"{base_name}_voting", index=False)
                             sim["social_choice_df"].to_excel(writer, sheet_name=f"{base_name}_social", index=False)
@@ -314,7 +327,6 @@ with st.sidebar.expander("💾 Results Management"):
                     if "xlsxwriter" in str(e):
                         st.warning("The 'xlsxwriter' library is not installed. Attempting to use 'openpyxl' instead.")
                         try:
-                            # Fallback to openpyxl engine
                             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                                 metadata_rows = []
                                 for sim in selected_simulations:
@@ -360,7 +372,6 @@ with st.sidebar.expander("💾 Results Management"):
                         key="download_selected_results"
                     )
 
-        # Consolidated Clear Saved Simulations Button
         st.write("---")
         st.write("Clear Saved Simulations")
         confirm_reset = st.checkbox("Confirm Clear All Simulations")
@@ -386,7 +397,7 @@ This manual is for version `app_final_v06.py` (updated April 21, 2025), which in
 ## Getting Started
 
 ### Prerequisites
-- **Python Environment**: Ensureolls Python 3.11 is installed with the following dependencies (as specified in `requirements.txt` or `environment.yml`):
+- **Python Environment**: Ensure Python 3.11 is installed with the following dependencies (as specified in `requirements.txt` or `environment.yml`):
   - `streamlit==1.37.1`
   - `numpy==1.26.4`
   - `pandas==2.2.2`
@@ -403,23 +414,23 @@ This manual is for version `app_final_v06.py` (updated April 21, 2025), which in
 ### Dashboard Layout
 - **Sidebar**: Contains simulation controls, results management, documentation, and advanced settings.
 - **Main Interface**: Displays simulation results in three tabs (Scatter Animation, Polarisation Metrics, Voting Results) and a section for downloading individual result tables.
-- **Screenshot Placeholder**: [Insert a screenshot of the dashboard’s home screen showing the sidebar and main interface.]
+- **Screenshot Placeholder**: [Insert a screenshot of the dashboard's home screen showing the sidebar and main interface.]
 
 ## Simulation Settings
 
-The sidebar’s "Simulation Settings" section allows you to configure the simulation parameters.
+The sidebar's "Simulation Settings" section allows you to configure the simulation parameters.
 
-- **Select Scenario for Delta Matrix**:
-  - Choose a predefined scenario (e.g., "Scenario 1 - Ideal World") from the dropdown to set the interaction matrix (`delta_matrix`).
-  - Scenarios define how agents with different preference profiles interact.
 - **Party Positions**:
-  - Select "Preset Scenario" to use party positions from the chosen scenario.
-  - Select "Manual Entry" to define 2–5 parties with custom X and Y coordinates using sliders.
+  - Select "Preset Scenario" to use a predefined scenario and its party positions.
+  - Select "Manual Entry" to define 2-5 parties with custom X and Y coordinates.
+- **Delta Matrix**:
+  - If using a preset scenario, the delta matrix is loaded from the scenario.
+  - If using manual entry, a default identity matrix is used.
 - **Sliders**:
-  - **Animation Speed (ms)**: Adjust the speed of the animation (100–2000 ms, default: 500 ms).
-  - **Number of Agents**: Set the number of agents (50–2000, default: 200).
-  - **Number of Iterations**: Set the total iterations (50–1000, default: 300).
-  - **Number of Frames**: Set the number of animation frames (10–100, default: 30).
+  - **Animation Speed (ms)**: Adjust the speed of the animation (100-2000 ms, default: 500 ms).
+  - **Number of Agents**: Set the number of agents (50-2000, default: 200).
+  - **Number of Iterations**: Set the total iterations (50-1000, default: 300).
+  - **Number of Frames**: Set the number of animation frames (10-100, default: 30).
 - **View Selected Configuration**:
   - Expand this section to see the party positions and delta matrix as tables.
   - **Screenshot Placeholder**: [Insert a screenshot of the expanded "View Selected Configuration" section showing the party positions and delta matrix tables.]
@@ -478,7 +489,7 @@ The "Results Management" section in the sidebar allows you to save, export, and 
     - Polarization metrics (`_polar`)
     - Voting results (`_voting`)
     - Social choice results (`_social`)
-  - **Note**: Sheet names are truncated to fit Excel’s 31-character limit (e.g., `Scenario 1 - Ideal W_party_pos`).
+  - **Note**: Sheet names are truncated to fit Excel's 31-character limit (e.g., `Scenario 1 - Ideal W_party_pos`).
 - **Screenshot Placeholder**: [Insert a screenshot of the "Results Management" expander showing the checkboxes and export button.]
 
 ### Clearing Saved Simulations
@@ -501,7 +512,7 @@ The "Results Management" section in the sidebar allows you to save, export, and 
 
 ## Advanced Controls
 - Expand the "Advanced Controls" section in the sidebar.
-- Click "🧹 Clear Cache" to clear the app’s cache and refresh the simulation.
+- Click "🧹 Clear Cache" to clear the app's cache and refresh the simulation.
 
 ## Troubleshooting
 - **Excel Export Fails**: If the export fails, ensure `xlsxwriter` or `openpyxl` is installed:
@@ -511,7 +522,8 @@ The "Results Management" section in the sidebar allows you to save, export, and 
   ```
 - **Slow Performance**: For large simulations (e.g., 2000 agents, 1000 iterations), reduce the number of agents, iterations, or frames to improve performance.
 - **Animation Not Displaying**: Ensure the simulation has completed successfully. Check the progress bar and status messages in the main interface.
-- **MATLAB Alignment Issues**: Compare `agents.positions` and `agents.pref_indices` with MATLAB’s `cagentnew` and `pprofshnew` using identical inputs to ensure consistency.
+- **Simulation Fails**: Check for errors in the sidebar (e.g., mismatched delta matrix dimensions) and adjust parameters accordingly.
+- **MATLAB Alignment Issues**: Compare `agents.positions` and `agents.pref_indices` with MATLAB's `cagentnew` and `pprofshnew` using identical inputs to ensure consistency.
 
 ## Contact and Support
 For additional support, please contact the developer at [insert contact information]. Provide details about your issue, including any error messages and the simulation parameters used.
@@ -594,7 +606,7 @@ if 'positions_record' not in st.session_state or st.session_state.positions_reco
         st.markdown("""
         Follow these steps to get started:
 
-        1. **Configure Settings:** Use the sidebar to select a scenario, define party positions, and adjust parameters like the number of agents (50–2000), iterations (50–1000), and animation speed.
+        1. **Configure Settings:** Use the sidebar to select a scenario, define party positions, and adjust parameters like the number of agents (50-2000), iterations (50-1000), and animation speed.
         2. **Run the Simulation:** Click the "▶️ Start" button in the sidebar to launch the simulation.
         3. **Explore Results:** View the results in three interactive tabs:
            - *Scatter Animation:* See agents move in the opinion space.
